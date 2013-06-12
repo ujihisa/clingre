@@ -61,10 +61,24 @@
     #_(when (= (-> json :body :status) "ok")
       (prn 'cool))))
 
+(defn say [session room text]
+  (let [json (clj-http.client/post
+               "http://lingr.com/api/room/say"
+               {:form-params
+                {:session session
+                 :room room
+                 :text text
+                 :app_key clingre-key}})
+        body (try
+               (clojure.data.json/read-str (:body json))
+               (catch java.io.EOFException e {}))]
+    body))
+
 (defn -main [& args]
   (case args
     ["-h"] (prn 'help)
-    (when-let [session #_"KZwqNz" (get-session)]
+    (when-let [session (get-session)]
+      (prn (say session "computer_science" "test from clingre"))
       (when-let [rooms (get-rooms session)]
         (prn 'session session 'rooms rooms)
         (loop [counter (subscribe-rooms session ["computer_science" "vim"])]
