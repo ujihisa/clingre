@@ -78,22 +78,31 @@
   (case args
     ["-h"] (prn 'help)
     (when-let [session (get-session)]
+      (prn 'session session)
       (future
         (when-let [rooms (get-rooms session)]
           (prn ['session session 'rooms rooms])
-          (loop [counter (subscribe-rooms session rooms #_["computer_science" "vim"])]
+          (loop [counter (subscribe-rooms session ["computer_science" "simcity" "vim" "mcujm"] #_["computer_science" "vim"])]
             (let [result (observe session counter)]
               (if-let [new-counter (result "counter")]
-                (do (prn result) (recur new-counter))
-                (recur counter))))))
-      (loop []
+                (do
+                  (print (format "\n%s" result))
+                  (flush)
+                  (recur new-counter))
+                (do
+                  (prn ['timedout result])
+                  (recur counter)))))))
+      #_(loop []
+        (print "\n> ")
+        (flush)
         (let [input (try
                       (read-string (read-line))
                       (catch RuntimeException e nil))
               #_{:room "computer_science" :text "test from clingre 2"}]
           (let [{room :room text :text} input]
-            (prn ['input input 'room room 'text text])
+            #_(prn ['input input 'room room 'text text])
             (when (and room text)
               (let [body (say session room text)]
-                (prn (body "status"))))))
+                #_(prn (body "status"))
+                (print (format "\n%s" (body "status")))))))
         (recur)))))
