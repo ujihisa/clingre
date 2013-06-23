@@ -1,6 +1,7 @@
 (ns clingre.core
   (:require clj-http.client)
-  (:require clojure.data.json))
+  (:require clojure.data.json)
+  (:gen-class))
 
 (def clingre-key "oWBgRP")
 
@@ -38,17 +39,19 @@
                "http://lingr.com/api/room/subscribe"
                {:form-params
                 {:session session
+                 :room (clojure.string/join "," rooms)
                  :rooms rooms
                  :app_key clingre-key}})
         body (try
                (clojure.data.json/read-str (:body json))
                (catch java.io.EOFException e {}))]
+    (prn ['subscribe body])
     (when (= (body "status") "ok")
       (body "counter"))))
 
 (defn observe [session counter]
   (let [json (clj-http.client/get
-                       "http://lingr.com/api/event/observe"
+                       "http://lingr.com:8080/api/event/observe"
                        {:query-params
                         {:session session
                          :counter counter
@@ -72,37 +75,57 @@
         body (try
                (clojure.data.json/read-str (:body json))
                (catch java.io.EOFException e {}))]
-    body))
+    (= "ok" (body "status"))))
+
+(defn receive-loop [session events]
+  (future
+    (try
+      (when-let [rooms (get-rooms session)]
+        #_(prn ['session session 'rooms rooms])
+        (loop [counter (subscribe-rooms session rooms)]
+          (let [result (observe session counter)]
+            (if-let [new-counter (result "counter")]
+              (do
+                (prn result)
+                (swap! events conj result)
+                (recur new-counter))
+              (do
+                #_(prn ['timedout result])
+                (recur counter))))))
+      (catch Exception e (str ['receive-loop-error e])))))
+
+#_(defn prepare []
+  (let [events (atom [])]
+    (when-let [session (get-session)]
+      (receive-loop session events)
+      [events session])))
 
 (defn -main [& args]
   (case args
     ["-h"] (prn 'help)
-    (when-let [session (get-session)]
-      (prn 'session session)
-      (future
-        (when-let [rooms (get-rooms session)]
-          (prn ['session session 'rooms rooms])
-          (loop [counter (subscribe-rooms session ["computer_science" "simcity" "vim" "mcujm"] #_["computer_science" "vim"])]
-            (let [result (observe session counter)]
-              (if-let [new-counter (result "counter")]
-                (do
-                  (print (format "\n%s" result))
-                  (flush)
-                  (recur new-counter))
-                (do
-                  (prn ['timedout result])
-                  (recur counter)))))))
-      #_(loop []
-        (print "\n> ")
-        (flush)
-        (let [input (try
-                      (read-string (read-line))
-                      (catch RuntimeException e nil))
-              #_{:room "computer_science" :text "test from clingre 2"}]
-          (let [{room :room text :text} input]
-            #_(prn ['input input 'room room 'text text])
-            (when (and room text)
-              (let [body (say session room text)]
-                #_(prn (body "status"))
-                (print (format "\n%s" (body "status")))))))
-        (recur)))))
+    (let [events (atom [])]
+      (when-let [session (get-session)]
+        (prn 'session session)
+        (receive-loop session events)
+        #_(loop []
+          (print "\n> ")
+          (flush)
+          (let [input (try
+                        (read-string (read-line))
+                        (catch RuntimeException e nil))
+                #_{:room "computer_science" :text "test from clingre 2"}]
+            (let [{room :room text :text} input]
+              #_(prn ['input input 'room room 'text text])
+              (when (and room text)
+                (let [body (say session room text)]
+                  #_(prn (body "status"))
+                  (print (format "\n%s" (body "status")))))))
+          (recur))))
+    #_(prn (say session "computer_science" "test from clingre"))
+    #_(when-let [rooms (get-rooms session)]
+      (prn 'session session 'rooms rooms)
+      (loop [counter (subscribe-rooms session #_rooms ["vim" "simcity"])]
+        (let [result (observe session counter)]
+          (if-let [new-counter (result "counter")]
+            (do (prn result) (recur new-counter))
+            (recur counter)))))))
