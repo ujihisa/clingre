@@ -3,9 +3,37 @@
   (:require clojure.data.json)
   (:gen-class))
 
-(def clingre-key "oWBgRP")
+(def ^:dynamic *debugging* true)
 
-(defn get-session []
+(defn debug [x]
+  (when *debugging*
+    (prn x)))
+
+(def clingre-key
+  "oWBgRP"; clingr's
+  #_"5xUaIa"; j6uil's
+  )
+
+(defn or-nil* [f]
+  (try (f)
+    (catch Exception e nil)))
+
+(defmacro or-nil [body]
+  `(or-nil* (fn [] ~@body)))
+
+(defn session-verify [session]
+  (debug ['session-verify session])
+  (let [json (clj-http.client/post
+               "http://lingr.com/api/session/verify"
+               {:form-params
+                {:session session :app_key clingre-key}})
+        body (try
+               (clojure.data.json/read-str (:body json))
+               (catch java.io.EOFException e {}))]
+    (= (body "status") "ok")))
+
+(defn session-create []
+  (debug 'session-create)
   (let [json (clj-http.client/post
                "http://lingr.com/api/session/create"
                {:form-params
@@ -16,53 +44,44 @@
                (clojure.data.json/read-str (:body json))
                (catch java.io.EOFException e {}))]
     (when (= (body "status") "ok")
-      (body "session"))
-    #_(when (= (-> json :body :status) "ok")
-      (prn 'cool))))
+      (body "session"))))
 
 (defn get-rooms [session]
   (let [json (clj-http.client/get
                "http://lingr.com/api/user/get_rooms"
                {:query-params
-                {:session session
-                 :app_key clingre-key}})
+                {:session session :app_key clingre-key}})
         body (try
                (clojure.data.json/read-str (:body json))
                (catch java.io.EOFException e {}))]
     (when (= (body "status") "ok")
-      (body "rooms"))
-    #_(when (= (-> json :body :status) "ok")
-      (prn 'cool))))
+      (body "rooms"))))
 
 (defn subscribe-rooms [session rooms]
-  (let [json (clj-http.client/post
+  (let [rooms (clojure.string/join "," rooms)
+        json (clj-http.client/get
                "http://lingr.com/api/room/subscribe"
-               {:form-params
-                {:session session
-                 :room (clojure.string/join "," rooms)
-                 :rooms rooms
-                 :app_key clingre-key}})
+               {:query-params
+                {:session session :rooms rooms}})
         body (try
                (clojure.data.json/read-str (:body json))
                (catch java.io.EOFException e {}))]
-    (prn ['subscribe body])
+    (debug ['subscribe session rooms '=> body])
     (when (= (body "status") "ok")
       (body "counter"))))
 
 (defn observe [session counter]
   (let [json (clj-http.client/get
-                       "http://lingr.com:8080/api/event/observe"
-                       {:query-params
-                        {:session session
-                         :counter counter
-                         :app_key clingre-key}})
-                body (try
-                       (clojure.data.json/read-str (:body json))
-                       (catch java.io.EOFException e {}))]
+               "http://lingr.com:8080/api/event/observe"
+               {:query-params
+                {:session session
+                 :counter counter
+                 :app_key clingre-key}})
+        body (try
+               (clojure.data.json/read-str (:body json))
+               (catch java.io.EOFException e {}))]
     (when (= (body "status") "ok")
-      body)
-    #_(when (= (-> json :body :status) "ok")
-      (prn 'cool))))
+      body)))
 
 (defn say [session room text]
   (let [json (clj-http.client/post
@@ -81,46 +100,63 @@
   (future
     (try
       (when-let [rooms (get-rooms session)]
-        #_(prn ['session session 'rooms rooms])
+        (debug ['session session 'rooms rooms])
         (loop [counter (subscribe-rooms session rooms)]
           (let [result (observe session counter)]
             (if-let [new-counter (result "counter")]
               (do
-                (prn result)
+                (debug result)
                 (swap! events conj result)
                 (recur new-counter))
               (do
-                #_(prn ['timedout result])
+                (debug ['timedout result])
                 (recur counter))))))
       (catch Exception e (str ['receive-loop-error e])))))
 
-#_(defn prepare []
+(defn start [filepath]
   (let [events (atom [])]
-    (when-let [session (get-session)]
-      (receive-loop session events)
-      [events session])))
+    (let [filedata (or (or-nil (eval (read-string (slurp filepath))))
+                       {})
+          session (let [session (and (map? filedata) (get filedata :session))]
+                    (if (and session (session-verify session))
+                      session
+                      (when-let [session (session-create)]
+                      (spit filepath (str (assoc filedata :session session)))
+                      session)))]
+      (if session
+        (do
+          (receive-loop session events)
+          [session events])
+        (prn "omg session-create failed")))))
+
+(defn say-json [json]
+  (let [dict (clojure.data.json/read-str json)]
+    (if (map? dict)
+      (if-let [{session "session" room "room" text "text"} dict]
+        (say session room text)
+        (binding [*out* *err*]
+          (println "include session, room and text.")))
+      (binding [*out* *err*]
+        (println "json parse failed")))))
 
 (defn -main [& args]
   (case args
     ["-h"] (prn 'help)
-    (let [events (atom [])]
-      (when-let [session (get-session)]
-        (prn 'session session)
-        (receive-loop session events)
-        #_(loop []
-          (print "\n> ")
-          (flush)
-          (let [input (try
-                        (read-string (read-line))
-                        (catch RuntimeException e nil))
-                #_{:room "computer_science" :text "test from clingre 2"}]
-            (let [{room :room text :text} input]
-              #_(prn ['input input 'room room 'text text])
-              (when (and room text)
-                (let [body (say session room text)]
-                  #_(prn (body "status"))
-                  (print (format "\n%s" (body "status")))))))
-          (recur))))
+    (start "/home/ujihisa/.clingre.clj")
+    #_(loop []
+      (print "\n> ")
+      (flush)
+      (let [input (try
+                    (read-string (read-line))
+                    (catch RuntimeException e nil))
+            #_{:room "computer_science" :text "test from clingre 2"}]
+        (let [{room :room text :text} input]
+          #_(prn ['input input 'room room 'text text])
+          (when (and room text)
+            (let [body (say session room text)]
+              #_(prn (body "status"))
+              (print (format "\n%s" (body "status")))))))
+      (recur))
     #_(prn (say session "computer_science" "test from clingre"))
     #_(when-let [rooms (get-rooms session)]
       (prn 'session session 'rooms rooms)
