@@ -1,11 +1,13 @@
 (ns clingre.core
-  (:require clj-http.client)
-  (:require clojure.data.json)
+  (:require [clj-http.client]
+            [clojure.data.json]
+            [clojure.main]
+            [clojure.tools.reader :as r])
   (:gen-class))
 
 (def ^:dynamic *debugging* true)
 
-(defn debug [x]
+(defn- debug [x]
   (when *debugging*
     (prn x)))
 
@@ -13,13 +15,6 @@
   "oWBgRP"; clingr's
   #_"5xUaIa"; j6uil's
   )
-
-(defn or-nil* [f]
-  (try (f)
-    (catch Exception e nil)))
-
-(defmacro or-nil [body]
-  `(or-nil* (fn [] ~@body)))
 
 (defn session-verify [session]
   (debug ['session-verify session])
@@ -38,7 +33,7 @@
                "http://lingr.com/api/session/create"
                {:form-params
                 {:user "ujihisa@gmail.com"
-                 :password ""
+                 :password "K3lx8t1"
                  :app_key clingre-key}})
         body (try
                (clojure.data.json/read-str (:body json))
@@ -115,8 +110,10 @@
 
 (defn start [filepath]
   (let [events (atom [])]
-    (let [filedata (or (or-nil (eval (read-string (slurp filepath))))
-                       {})
+    (let [filedata (try
+                     (binding [r/*read-eval* false]
+                       (r/read-string (slurp filepath)))
+                     (catch Exception e {}))
           session (let [session (and (map? filedata) (get filedata :session))]
                     (if (and session (session-verify session))
                       session
@@ -138,6 +135,11 @@
           (println "include session, room and text.")))
       (binding [*out* *err*]
         (println "json parse failed")))))
+
+(defn
+  ^{:doc "Starts repl within clingre.core namespace with fixed prompt."}
+  start-repl []
+  (clojure.main/repl :prompt #(print "\nCLINGRE=>")))
 
 (defn -main [& args]
   (case args
